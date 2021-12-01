@@ -5,14 +5,21 @@
 using namespace std;
 
 extern vector<int> g_physMem; // global physical memory array
+extern int pageSize;
 
 //----- Functions -----//
+
+
+void delMemFrame(int frame);    // Deletes contents inside each specified frame
+
+
 void memMngr(int memSize, int frameSize);   // Initialize memory space
 int allocate(int allocSize, int pid);   // Allocating memory space to process
 int deallocate(int pid);    // Deallocates memory space from process with process ID pid
 int read(int pid, int logi_addr);   // Used to read value from memory location specified by page number 'logi_addr'
 int write(int pid, int logi_addr);  // Used to write a value to memory space specified by parameter 'logi_addr' of a process with pid
 void printMem(void);    // Prints out physical memory space -- freeFrameList and processList
+void printMemory();
 
 //----- Lists -----//
 
@@ -114,6 +121,9 @@ public:
     // Find pid
     bool findPid(int pid);
 
+    // Valid or invalid
+    bool checkValid (int pid, int pgNum);
+
     // Constructor
     ProcessList();
 
@@ -157,7 +167,7 @@ public:
     void removePid(int pid, int pageNum);
     
     // Find victim pid
-     int victimPid(int pid, int pageNum);
+    int victimPid(int pid, int pageNum);
     
     // Find victim page
     int victimPage(int pid, int pageNum);
@@ -170,6 +180,6 @@ public:
 
 };
 
-extern StackList stackList; // global variable for processList
+extern StackList stackList; // global variable for stackList
 
 #endif
