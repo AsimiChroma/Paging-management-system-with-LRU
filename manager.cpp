@@ -1,3 +1,4 @@
+
 #include <vector>
 #include <iostream>
 #include "manager.h"
@@ -8,36 +9,60 @@ ProcessList processList;
 FreeList freeFrameList;
 StackList stackList;
 vector<int> g_physMem;
+int pageSize;
 
 
+void delMemFrame(int frame)
+{
+    for (int i = frame*pageSize; i < frame*pageSize+pageSize; i++)  // set i to frame * pageSize and keep deleting each frame until specified
+    {
+        g_physMem[i] = 0;
+    }
+}
+
+void printMemory()
+{
+    cout << "Global Memory: " << endl;
+    for (int i = 0; i < g_physMem.size(); i++)
+    {
+        cout << g_physMem[i] << endl;
+    }
+}
 
 void memMngr(int memSize, int frameSize) // memSize = # of frames in physical memory
 {
     g_physMem.resize(memSize*frameSize, 0); 
     freeFrameList.init(memSize);
+    pageSize = frameSize;   // set the pageSize here
     //cout << memSize << "MEMSIZE" << endl;
     //cout << frameSize << "FRAMESIZE" << endl;
     //cout << g_physMem.size() << "PHYSMEMSIZE" << endl;
     //freeFrameList.print();
 }
 
+
 int allocate(int allocSize, int pid)    // allocSize = pagesize
 {
    processList.insert(pid, allocSize);
    for (int i = 0; i < allocSize; i++)
-   {
+   { 
    		if (freeFrameList.findFrame() == -1)
    		{
+            // --- LRU Implementation --- //
    			// Find the victim pid and pagenum so we can store it before deleting it
    			int victimPage = stackList.victimPage(pid, i);
    			int victimPid = stackList.victimPid(pid, i);
    			stackList.removePid(pid, i);
    			processList.updatePgTable(victimPid, victimPage, -1, false);	// set page table to be false b/c we delete it
-   			int frame = processList.pageLoookup(victimPid, victimPage);
+   			int frame = processList.pageLookup(victimPid, victimPage);
+            delMemFrame(frame);   // delete the value inside that frame in the physical memory to free up phys memory
    			freeFrameList.updateFrame(frame, true);
    		}
-		processList.updatePgTable(pid, i, freeFrameList.findFrame(), true);	// now new framenum can be inserted to top of stack
-		freeFrameList.updateFrame(freeFrameList.findFrame(), false);
+        stackList.insert(pid, i);   // insert pagenum onto the top of the stack
+        int free = freeFrameList.findFrame();
+
+		processList.updatePgTable(pid, i, free, true);	// now new framenum can be inserted to top of stack
+		freeFrameList.updateFrame(free, false);    // new framenum inserted here and free is set to false
    }
    return 1;
 }
@@ -64,14 +89,40 @@ int write(int pid, int logi_addr)   // logical address = page number in this cas
 {
     // write a value of '1' at the memory location specified by the page number of a pid
     // page number converted to frame number before writing value '1'
-        // page num --> page table --> frame number --> write value '1'
+    // page num --> page table --> frame number --> write value '1'
     // if succesful (if pid or size of pid exists), return 1, if unsuccesful return -1
 
     if (processList.findPid(pid) && processList.findPgSize(pid) > logi_addr && logi_addr >= 0)
     {
-        int frameNum = processList.pageLookup(pid, logi_addr);
-        g_physMem[frameNum] = 1;    // writes '1' to the frame number
+        if (processList.checkValid(pid, logi_addr))
+        {
+             // remove least recently used   
+   			stackList.removePid(pid, logi_addr);
+            
+            stackList.insert(pid, logi_addr);   // insert onto the top of the stack
+        }
+        else 
+        {
+            // apply LRU
+            int victimPage = stackList.victimPage(pid, logi_addr);
+   			int victimPid = stackList.victimPid(pid, logi_addr);
 
+            // remove least recently used   
+   			stackList.removePid(pid, logi_addr);
+   			processList.updatePgTable(victimPid, victimPage, -1, false);	// set page table to be false b/c we delete it
+   			int frame = processList.pageLookup(victimPid, victimPage);
+            delMemFrame(frame);   // delete the value inside that frame in the physical memory to free up phys memory
+   			freeFrameList.updateFrame(frame, true);
+            
+            // insert newly used
+            stackList.insert(pid, logi_addr);   // insert onto the top of the stack
+		    processList.updatePgTable(pid, logi_addr, freeFrameList.findFrame(), true);	// now new framenum can be inserted to top of stack
+		    freeFrameList.updateFrame(freeFrameList.findFrame(), false);    // new framenum inserted here and free is set to false             
+        }
+        int frameNum = processList.pageLookup(pid, logi_addr);
+        g_physMem[frameNum*pageSize] = 1;    // writes '1' to the frame number - assume first value in page
+        cout << frameNum << endl;
+        printMemory();
         return 1;
     }
     else
@@ -82,9 +133,42 @@ int write(int pid, int logi_addr)   // logical address = page number in this cas
 
 int read(int pid, int logi_addr)
 {
-        int frameNum = processList.pageLookup(pid, logi_addr);
+    if (processList.findPid(pid) && processList.findPgSize(pid) > logi_addr && logi_addr >= 0)
+    {
+        if (processList.checkValid(pid, logi_addr))
+        { 
+   			stackList.removePid(pid, logi_addr);
+            
+            stackList.insert(pid, logi_addr);   // insert onto the top of the stack
+        }
+        else 
+        {
+            // apply LRU
+            int victimPage = stackList.victimPage(pid, logi_addr);
+   			int victimPid = stackList.victimPid(pid, logi_addr);
 
-        return g_physMem[frameNum]; // reads and returns the value of that frame
+            // remove least recently used   
+   			stackList.removePid(pid, logi_addr);
+   			processList.updatePgTable(victimPid, victimPage, -1, false);	// set page table to be false b/c we delete it
+   			int frame = processList.pageLookup(victimPid, victimPage);
+            delMemFrame(frame);   // delete the value inside that frame in the physical memory to free up phys memory
+   			freeFrameList.updateFrame(frame, true);
+            
+            // insert newly used
+            stackList.insert(pid, logi_addr);   // insert onto the top of the stack
+		    processList.updatePgTable(pid, logi_addr, freeFrameList.findFrame(), true);	// now new framenum can be inserted to top of stack
+		    freeFrameList.updateFrame(freeFrameList.findFrame(), false);    // new framenum inserted here and free is set to false        
+        }
+        int frameNum = processList.pageLookup(pid, logi_addr);
+        // cout << "framenum" << frameNum << endl;
+        // cout << g_physMem[frameNum*pageSize] << endl;
+        return g_physMem[frameNum*pageSize]; // reads and returns the value of that frame - assume first value in page
+                        // remove least recently used  
+    }
+    else
+    {
+        return -1;
+    }     
 }
 
 
@@ -92,6 +176,9 @@ void printMem(void)
 {
     freeFrameList.print();
     processList.print();
+    stackList.print();
+    // printMemory();
+    //cout << g_physMem[1] << endl;
 }
 
 
@@ -144,6 +231,7 @@ int FreeList::totalFree()
 void FreeList::print() 
 {
     FreeNode* ptr = head;
+    cout << "Free Frame List: " << endl;
     while (ptr != NULL)
     {
         if (ptr->freeFrame)
@@ -219,6 +307,7 @@ void FreeList::init(int frameSize)
 void ProcessList::print() 
 {
     ProcessNode* ptr = head;
+    cout << "Process List: " << endl;
     while (ptr != NULL)
     {
             cout << ptr->pid << " " << ptr->pageSize << endl;
@@ -238,6 +327,7 @@ void ProcessList::insert(int pid, int pageSize)
         node->pid = pid;
         node->pageSize = pageSize;
         node->pgTable.resize(pageSize, -1);
+        node->validFlag.resize(pageSize, 1);    // new page marked as valid in page table so value set to 1 for true
         node->next = NULL;
         node->prev = NULL;
     }
@@ -312,7 +402,7 @@ void ProcessList::updatePgTable(int pid, int pgNum, int frameNum, bool validFlag
 {
     ProcessNode* ptr = head;
     while (ptr != NULL)
-    {
+    { 
         if (ptr->pid == pid)
         {
             ptr->pgTable[pgNum] = frameNum;
@@ -364,6 +454,20 @@ bool ProcessList::findPid(int pid)
     return false;
 }
 
+ bool ProcessList::checkValid (int pid, int pgNum) 
+ {
+    ProcessNode* ptr = head;
+    while (ptr != NULL)
+    {
+        if (ptr->pid == pid)
+        {
+           return ptr->validFlag[pgNum];
+        }
+        ptr = ptr->next;
+    }
+    return false;
+ }
+
 ProcessList::ProcessList() 
 {
     head = NULL;
@@ -404,13 +508,14 @@ void StackList::insert(int pid, int pageNum)
     {
        tail = node;
     }
-    node = head;
+    head = node;    // head is the most recently used
 }
 
 // Print the LRU stack
 void StackList::print() 
 {
     StackNode* ptr = head;
+    cout << "Stack: " << endl;
     while (ptr != NULL)
     {
             cout << ptr->pid << " " << ptr->pageNum << endl;
@@ -480,7 +585,7 @@ int StackList::victimPid(int pid, int pageNum)
 	    ptr = ptr->next;
 	}
 	
-	return -1
+	return -1;
 }
 
 
@@ -497,7 +602,7 @@ int StackList::victimPage(int pid, int pageNum)
 	    ptr = ptr->next;
 	}
 	
-	return -1
+	return -1;
 }
     
 
@@ -511,4 +616,3 @@ StackList::~StackList()
 {
     remove();
 }
-
